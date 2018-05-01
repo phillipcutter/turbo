@@ -1,8 +1,16 @@
+import base64
+import json
 import math
-
+import time
 import os
 import subprocess
 import warnings
+
+import pickle
+
+import dill
+from plyplus import plyplus, grammars
+from plyplus.strees import STree
 
 
 def quoteInsensitiveSearch(string, filter):
@@ -230,15 +238,17 @@ class Code():
 		self.varIncrementer += 1
 		return string
 
-	def getParentNestFirstLineNotIfLineNumber(self, lineNumber):
+	def getParentNestFirstLineLineNumber(self, lineNumber):
 		checkLine = lineNumber - 1
 		if checkLine == 0:
 			warnings.warn("Why the heck do you think the parent of the first line is an if statement!? returning None")
 			return None
 		elif not self.getParentOfNest(checkLine):
 			return 1
-		while self.getParentOfNest(checkLine).text.strip().startswith(("if", "else", "elif")):
-			if checkLine == self.amountOfLines():
+		while self.getParentOfNest(checkLine).text.strip().startswith(("if", "else", "elif", "for", "while")):
+			if checkLine == self.amountOfLines() or \
+					self.getParentOfNest(checkLine).text.strip().replace(" ", "")\
+					.startswith("if__name__==\"__main__\""):
 				break
 			elif not self.getParentOfNest(checkLine - 1):
 				return 1
@@ -246,9 +256,20 @@ class Code():
 
 		return checkLine
 
+	def __str__(self):
+		lines = [line.text for line in self.getLines()]
+		returnStr = ""
+		ln = 1
+		for line in lines:
+			returnStr += str(ln) + ": " + line + "\n"
+			ln += 1
+		if returnStr.endswith("\n"):
+			returnStr = returnStr[:-2]
+		return returnStr
+
 # Python: Haxe
 builtinConversions = {
-	"print": "trace",
+	"print": "println",
 	"append": "push"
 }
 
@@ -257,14 +278,17 @@ def replaceBuiltins(code):
 		code = code.replace(pyBuiltin, hxBuiltin)
 	return code
 
-def addSemicolon(line):
-	return line + ";"
+def addSemicolon(line, dontAddIfAlreadHas=True):
+	if dontAddIfAlreadHas and line.endswith(";"):
+		return line
+	else:
+		return line + ";"
 
-def addSemicolons(code):
+def addSemicolons(code, dontAddIfAlreadHas=True):
 	"""Adds semicolons to at the end of each line"""
 	code = code.split("\n")
 
-	code = [line + ";" for line in code]
+	code = [line + ";" if (dontAddIfAlreadHas and not line.endswith(";")) else "" for line in code]
 
 	code = "\n".join(code)
 
@@ -279,16 +303,25 @@ def getHxFileNameFromPy(fileName, appendHx=True):
 def runHaxeCompiler(debug, fileName, args):
 	# Get Haxe to convert .hx to C++
 	if not args.nocomp:
+		flags = []
+		if debug:
+			flags.append("-debug")
+		# if not args.trace:
+		# 	flags.append("--no-traces")
 		print("Converting to C++")
 		callString = r"""cd ../intermediate
-		haxe -cpp cpp -debug -main """ + getHxFileNameFromPy(fileName, appendHx=False)
+		haxe -cpp cpp -main """ + getHxFileNameFromPy(fileName, appendHx=False) + " " + " ".join(flags)
 
 		if debug:
-			cppConversionOut = subprocess.check_call(callString, shell=True)
-			print(cppConversionOut)
+			subprocess.check_call(callString, shell=True)
 		else:
 			FNULL = open(os.devnull, 'w')
-			cppConversionOut = subprocess.check_call(callString, shell=True, stdout=FNULL, stderr=subprocess.STDOUT)
+			try:
+				subprocess.check_call(callString, shell=True, stdout=FNULL, stderr=subprocess.STDOUT)
+			except subprocess.CalledProcessError as err:
+				print("Looks like an error occured, to learn more try running with the -d flag for debug output.")
+				time.sleep(0.25) # This is so the print statement isn't jumbled with the error
+				raise err
 
 def tabsOf(string):
 	return consecutiveSubstrInStr(string, "\t")
@@ -327,3 +360,35 @@ class Line():
 
 	def __str__(self):
 		return f"Line Obj: {self.text}"
+
+def updateOrAddToList(lst, index, newVal, forceInsert=False):
+	if forceInsert or index >= len(lst):
+		lst.insert(index, newVal)
+	else:
+		lst[index] = newVal
+	return lst
+
+def getGrammar():
+	with open("grammar.tmp", "ab+") as file:
+		file.seek(0)
+		contents = file.read()
+		file.seek(0)
+		if not contents:
+			# Regenerate grammar file:
+			grammar = plyplus.Grammar(grammars.open('python.g'))
+			dill.dump(grammar, file)
+		else:
+			# Access grammar file
+			grammar = dill.load(file)
+	return grammar
+
+def tailsOfTree(tree):
+	tokInfo = {}
+	for subTree in tree.tail:
+		if isinstance(subTree, STree) and len(subTree.tail) > 1:
+			tokInfo.update(tailsOfTree(subTree))
+		else:
+			tokInfo[subTree.head] = subTree.tail
+
+	print(tokInfo)
+	return tokInfo

@@ -16,6 +16,9 @@ parser.add_argument("-n", "--nocomp", action="store_true",
                     help='do not compile into c++, just create Haxe file')
 parser.add_argument("-r", "--norun", action="store_true",
                     help='do not run the file, just compile')
+parser.add_argument("-t", "--trace", action="store_true",
+                    help='add location traces to all print statements')
+
 args = parser.parse_args()
 
 def main():
@@ -58,8 +61,8 @@ def main():
 					# /r/ShowerThoughts sorta thing -- vars inside the scope of an if, elif, else need to be
 					# exposed to code outside of that specific scope, in Python they are always exposed outside of an if
 					# Bonus -- Horrible function name was created below! :)
-					if code.getParentOfNest(lineNumber).text.strip().startswith(("if", "else", "elif")):
-						parentNestFirstLineNumber = code.getParentNestFirstLineNotIfLineNumber(lineNumber)
+					if code.getParentOfNest(lineNumber).text.strip().startswith(("if", "else", "elif", "for", "while")):
+						parentNestFirstLineNumber = code.getParentNestFirstLineLineNumber(lineNumber)
 						nest = code.getNestOfLine(parentNestFirstLineNumber, sameIndentationToo=True, lineNumDict=True)
 						initializeVar = [True, parentNestFirstLineNumber]
 					else:
@@ -77,16 +80,16 @@ def main():
 							if dict(newValLines).get(newLineNumber, False):
 								newValLines = dict(newValLines)
 								oldLine = dict(newValLines).get(newLineNumber)
-								newValLines[newLineNumber] = oldLine.replace(name, newName)
+								newValLines[newLineNumber] = typeconvert.replaceVar(oldLine, name, newName)
 								newValLines = [[k, v] for k, v in newValLines.items()]
 							else:
 								oldLine = code.getLine(newLineNumber).text
 								newValLines.append(
-									[newLineNumber, oldLine.replace(name, newName)])
+									[newLineNumber, typeconvert.replaceVar(oldLine, name, newName)])
 						if initializeVar[0]:
 							initializeLocation = initializeVar[1]
 							tabsForInitialization = "\t" * util.tabsOf(code.getLine(initializeLocation).text)
-							varInitializationStr =  tabsForInitialization + f"var {newName}:Dynamic"
+							varInitializationStr = tabsForInitialization + f"var {newName}:Dynamic = null"
 							if dict(newValLines).get(initializeLocation, False):
 								newValLines = dict(newValLines)
 								oldLine = dict(newValLines).get(initializeLocation)
@@ -154,11 +157,12 @@ def main():
 				if info["exp"] == "=":
 					checkLine = lineNumber - 1
 					found = False
+					declareStr = f"var {info['name']}:Dynamic;"
 					for i in range(code.amountOfLines() - checkLine):
 						checkLine -= 1
 						if checkLine == 0:
 							break
-						elif code.getParentOfNest(checkLine) and info["name"] in\
+						elif code.getParentOfNest(checkLine) and info['name'] in\
 						code.getNestOfLine(code.getParentOfNest(checkLine).number, sameIndentationToo=True, cutoff=lineNumber):
 							found = True
 							break
@@ -235,7 +239,7 @@ def main():
 			for index, line in enumerate(nestedCode):
 				nestedCode[index] = "\t" + nestedCode[index]
 			nestedCode = "\n".join(nestedCode)
-
+			insertCode += typeconvert.getImports(code, newLineEnd=True)
 			insertCode += """class """ + util.getHxFileNameFromPy(fileName, appendHx=False) + """ {
 	static function main() {
 """ + nestedCode + """
@@ -266,14 +270,17 @@ def main():
 	if not args.nocomp:
 		print("Python converted to C++")
 		callString = r"""cd ../intermediate/cpp
-							cp ./""" + util.getHxFileNameFromPy(fileName, appendHx=False) + "-debug ../../"\
-		             + util.getHxFileNameFromPy(fileName, appendHx=False)
+cp ./""" + util.getHxFileNameFromPy(fileName, appendHx=False)\
+	             + ("-debug" if debug else "") +  " ../../"\
+	             + util.getHxFileNameFromPy(fileName, appendHx=False)
+		print("Copy commands: \n" + callString)
 		subprocess.check_call(callString, shell=True)
 		print("Moved file to location of original location of .py file.")
 		if not args.norun:
 			print("Now the program shall execute\n-----------------------------")
 			callString = r"""cd ../intermediate/cpp
-					./""" + util.getHxFileNameFromPy(fileName, appendHx=False) + "-debug"
+					./""" + util.getHxFileNameFromPy(fileName, appendHx=False) + ("-debug" if debug else "")
+			print("starting with commands:\n" + callString)
 			subprocess.check_call(callString, shell=True)
 
 def createHx(contents, fileName):
